@@ -1,8 +1,8 @@
 CUDA_VISIBLE_DEVICES=$1 python main.py \
-    --model_type svm \
-    --sample downsample \
-    --sample_rate 0.5 \
-    --imputer none \
+    --model_type mlp \
+    --sample none \
+    --sample_rate 0.2 \
+    --imputer knn \
     --loss_fn sigmoid \
     --input_file ../data/5year.arff \
     --max_epoches 30 \

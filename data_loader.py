@@ -17,6 +17,10 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.impute import KNNImputer, SimpleImputer
 from sklearn.utils import resample
 
+from imblearn.over_sampling import SMOTE
+from imblearn.under_sampling import RandomUnderSampler
+from imblearn.pipeline import Pipeline
+
 
 def select_col(data):
     """
@@ -119,6 +123,26 @@ def downsample(data, seed, sample_rate):
     return data  
 
 
+def smotesample(data, seed, sample_rate):
+    """ First upsample minority, and the downsample majority.
+    Args:
+        sample_rate: float. Upsample minority data to 
+            sample_rate * len(majority data)
+    """
+    assert sample_rate < 1.0
+    over = SMOTE(sampling_strategy=sample_rate)
+    under = RandomUnderSampler(sampling_strategy=0.5)
+    steps = [('o', over), ('u', under)]
+    pipeline = Pipeline(steps=steps)
+    # transform the dataset
+    X = data[:, :-1]
+    y = data[:, -1]
+    X, y = pipeline.fit_resample(X, y)
+    sampled_data = np.concatenate([X, np.expand_dims(y, axis=1)], axis=1)  
+    print("Before smotesampling: %d, after smotesampling: %d" % (len(data), len(sampled_data)))
+    return sampled_data
+
+
 def split_data(args,
                 input_file: str=None, 
                 all_data: np.ndarray=None,
@@ -156,6 +180,8 @@ def split_data(args,
             train = upsample(train, args.seed, args.sample_rate)
         elif args.sample == "downsample":
             train = downsample(train, args.seed, args.sample_rate)
+        elif args.sample == "smotesample":
+            train = smotesample(train, args.seed, args.sample_rate)
         else:
             pass 
         # weight
