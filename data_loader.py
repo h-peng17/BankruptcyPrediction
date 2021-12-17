@@ -145,49 +145,36 @@ def smotesample(data, seed, sample_rate):
 
 def split_data(args,
                 input_file: str=None, 
-                all_data: np.ndarray=None,
                 train_rate: float=0.8, 
                 dev_rate: float=0.1, 
-                test_rate: float=0.1, 
-                norm: bool=True) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict]:
-    if all_data is not None:
-        end_of_train = int(train_rate * len(all_data))
-        end_of_dev = int((train_rate+dev_rate) * len(all_data))
-        train = np.array(all_data[:end_of_train])
-        dev = np.array(all_data[end_of_train:end_of_dev])
-        test = np.array(all_data[end_of_dev:])
-        # weight
-        pos = all_data[:, -1].sum()
-        neg = len(all_data) - pos 
-        weight = {1: float(neg/pos)}
+                test_rate: float=0.1) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict]:
+    # load and shuffle
+    random.seed(args.seed)
+    data, meta = arff.loadarff(input_file)
+    data = data.tolist()
+    random.shuffle(data)
+    data = np.array(data, dtype=np.float32)
+    data = standardize(impute(data, _imputer=args.imputer))
+    # split
+    assert int(train_rate+dev_rate+test_rate)== 1
+    end_of_train = int(train_rate * len(data))
+    end_of_dev = int((train_rate+dev_rate) * len(data))
+    train = data[:end_of_train]
+    dev = data[end_of_train:end_of_dev]
+    test = data[end_of_dev:]
+    # sample 
+    if args.sample == "upsample":
+        train = upsample(train, args.seed, args.sample_rate)
+    elif args.sample == "downsample":
+        train = downsample(train, args.seed, args.sample_rate)
+    elif args.sample == "smotesample":
+        train = smotesample(train, args.seed, args.sample_rate)
     else:
-        # load and shuffle
-        random.seed(args.seed)
-        data, meta = arff.loadarff(input_file)
-        data = data.tolist()
-        random.shuffle(data)
-        data = np.array(data, dtype=np.float32)
-        data = standardize(impute(data, _imputer=args.imputer))
-        # split
-        assert int(train_rate+dev_rate+test_rate)== 1
-        end_of_train = int(train_rate * len(data))
-        end_of_dev = int((train_rate+dev_rate) * len(data))
-        train = data[:end_of_train]
-        dev = data[end_of_train:end_of_dev]
-        test = data[end_of_dev:]
-        # sample 
-        if args.sample == "upsample":
-            train = upsample(train, args.seed, args.sample_rate)
-        elif args.sample == "downsample":
-            train = downsample(train, args.seed, args.sample_rate)
-        elif args.sample == "smotesample":
-            train = smotesample(train, args.seed, args.sample_rate)
-        else:
-            pass 
-        # weight
-        pos = train[:, -1].sum()
-        neg = len(train) - pos 
-        weight = {1: float(neg/pos)}
+        pass 
+    # weight
+    pos = train[:, -1].sum()
+    neg = len(train) - pos 
+    weight = {1: float(neg/pos)}
     print("#Train: %d, #Dev: %d, #Test: %d" % (len(train), len(dev), len(test)))
     print("#Train: %d, #Dev: %d, #Test: %d" % (train[:, -1].sum(), dev[:, -1].sum(), test[:, -1].sum()))
     return train, dev, test, weight
