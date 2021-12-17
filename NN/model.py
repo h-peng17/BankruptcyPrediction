@@ -41,7 +41,7 @@ class MLPForBF(nn.Module):
         x = self.mlp3(x) + x
         if self.args.loss_fn == "sigmoid":
             logits = self.fc(x).squeeze(-1)
-            loss_fn = nn.BCEWithLogitsLoss()
+            loss_fn = nn.BCEWithLogitsLoss(pos_weight=self.pos_weight)
             loss = loss_fn(logits, y)
             preds = torch.sigmoid(logits) > 0.5
         else:
@@ -50,6 +50,40 @@ class MLPForBF(nn.Module):
             loss = loss_fn(logits, y.to(torch.long))
             preds = torch.argmax(logits, dim=1)
         return loss, preds 
+
+
+class MLPForFilling(nn.Module):
+    def __init__(self, args, input_size) -> None:
+        super(MLPForFilling, self).__init__()
+        self.args = args 
+        self.mlp1 = nn.Sequential(
+            nn.Linear(input_size, 256),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+        )
+        self.mlp2 = nn.Sequential(
+            nn.Linear(256, 256),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+        )
+        self.mlp3 = nn.Sequential(
+            nn.Linear(256, 256),
+            nn.ReLU(),
+            nn.Dropout(0.5),
+        )
+        self.fc = nn.Linear(256, 1)
+    
+    def forward(self, x, y=None):
+        x = self.mlp1(x)
+        x = self.mlp2(x) + x
+        x = self.mlp3(x) + x
+        logits = self.fc(x).squeeze(-1)
+        loss_fn = nn.MSELoss()
+        if y is not None:
+            loss = loss_fn(logits, y)
+            return loss 
+        else:
+            return logits
 
 
 

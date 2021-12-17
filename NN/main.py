@@ -9,7 +9,7 @@ import random
 import time
 import logging
 import argparse
-from collections import Counter
+from collections import Counter, defaultdict
 from pathlib import Path
 from sklearn.utils import class_weight
 
@@ -27,6 +27,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from model import MLPForBF
 from data_loader import split_data, DatasetForBF
+from data_processor import fill_empty
 
 
 def set_seed(args):
@@ -111,7 +112,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="recognize")
     parser.add_argument("--input_file", dest="input_file", type=str,
                         default="", help="input file")
-
+    
+    parser.add_argument("--imputer", dest="imputer", type=str, 
+                        default="simple", help="imputer")
+    parser.add_argument("--sample", dest="sample", type=str, 
+                        default="upsample", help="sample")
+    parser.add_argument("--sample_rate", dest="sample_rate", type=float, 
+                        default=1.0, help="sample_rate")
 
     parser.add_argument("--model_type", dest="model_type", type=str,
                         default="cnn", help="model type")
@@ -141,15 +148,15 @@ if __name__ == "__main__":
     print(args)
     # set seed
     set_seed(args)    
-    train_set, dev_set, test_set, weight = split_data(args.input_file)
+    train_set, dev_set, test_set, weight = split_data(args, input_file=args.input_file)
+    print(weight)
 
     if args.model_type == "svm":
-        clf = SVC(kernel="poly", class_weight=weight, degree=2, probability=True, random_state=args.seed)
+        clf = SVC(kernel="rbf", class_weight=weight, probability=True, random_state=args.seed)
         train_set = np.concatenate([train_set, dev_set], axis=0)
         clf.fit(train_set[:, :-1], train_set[:, -1])
         y = clf.predict(test_set[:, :-1])
         xx = clf.decision_function(test_set[:, :-1])
-        # pdb.set_trace()
         acc = (test_set[:, -1] == y).sum() / len(y)
         macro_f1 = f1_score(test_set[:, -1], y, average="macro")     
         print("Accuracy: %.4f, Macro-F1: %.4f" % (acc, macro_f1))
