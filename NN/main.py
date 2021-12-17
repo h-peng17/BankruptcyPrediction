@@ -14,7 +14,7 @@ from pathlib import Path
 from sklearn.utils import class_weight
 
 from tqdm import trange
-from sklearn.metrics import f1_score
+from sklearn.metrics import f1_score, roc_auc_score, accuracy_score
 from sklearn.svm import SVC
 from sklearn.linear_model import LogisticRegressionCV, LogisticRegression
 
@@ -50,7 +50,7 @@ def train(args, model, train_dataloader, dev_dataloader, test_dataloader):
     print("We will train model in %d steps" % step_tot)
     global_step = 0
     best_dev_score = 0
-    best_test_score = 0
+    final_acc, final_f1, final_auc = 0, 0, 0
     writter = SummaryWriter()
     for i in range(args.max_epoches):
         crr, tot = 0, 0
@@ -81,15 +81,16 @@ def train(args, model, train_dataloader, dev_dataloader, test_dataloader):
         with torch.no_grad():
             print("deving....")
             model.eval()            
-            score = eval_F1(args, model, dev_dataloader)
-            writter.add_scalar("Macro F1 on test", score, i)
-            if score > best_dev_score:
-                best_dev_score = score
-                best_test_score = eval_F1(args, model, test_dataloader)
-                print("Best Dev score: %.3f,\tTest score: %.3f" % (best_dev_score, best_test_score))
+            acc, f1, auc = eval_F1(args, model, dev_dataloader)
+            writter.add_scalar("Macro F1 on test", f1, i)
+            if f1 > best_dev_score:
+                best_dev_score = f1
+                final_acc, final_f1, final_auc = eval_F1(args, model, test_dataloader)
+                print("Best Dev score: %.3f,\tTest score: %.3f" % (best_dev_score, final_f1))
             else:
-                print("Dev score: %.3f" % score)
-    print("@RESULT: Best Dev score is %.3f, Test score is %.3f\n" %(best_dev_score, best_test_score))
+                print("Dev score: %.3f" % f1)
+    print("@RESULT: Best Dev score is %.3f, Test score is %.3f\n" %(best_dev_score, final_f1))
+    dump_result(final_acc, final_f1, final_auc)
 
 
 def eval_F1(args, model, dataloader):
@@ -104,8 +105,23 @@ def eval_F1(args, model, dataloader):
         _, preds = model(**inputs)
         tot_label.extend(inputs["y"].cpu().detach().tolist())
         tot_output.extend(preds.cpu().detach().tolist())
-    f1 = f1_score(tot_label, tot_output, average="macro")     
-    return f1
+    preds = np.array(tot_output) > 0.5
+    acc, macro_f1, auc = compute_score(tot_label, preds, tot_output)
+    return acc, macro_f1, auc
+
+
+def dump_result(acc, macro_f1, auc):
+    with open("result.txt", "a+") as f:
+        result = "&%.2f&%.2f&%.2f" % (acc*100, macro_f1*100, auc*100)
+        f.write(result)
+        f.close()
+    
+
+def compute_score(label, preds, probs):
+    acc = accuracy_score(label, preds)
+    f1 = f1_score(label, preds, average="macro")   
+    auc = roc_auc_score(label, probs)
+    return acc, f1, auc 
 
 
 if __name__ == "__main__":
@@ -145,6 +161,7 @@ if __name__ == "__main__":
     parser.add_argument("--seed", dest="seed", type=int,
                         default=42, help="seed for network")
     args = parser.parse_args()
+    print("-"*100)
     print(args)
     # set seed
     set_seed(args)    
@@ -156,18 +173,20 @@ if __name__ == "__main__":
         train_set = np.concatenate([train_set, dev_set], axis=0)
         clf.fit(train_set[:, :-1], train_set[:, -1])
         y = clf.predict(test_set[:, :-1])
-        xx = clf.decision_function(test_set[:, :-1])
-        acc = (test_set[:, -1] == y).sum() / len(y)
-        macro_f1 = f1_score(test_set[:, -1], y, average="macro")     
-        print("Accuracy: %.4f, Macro-F1: %.4f" % (acc, macro_f1))
+        probs = clf.decision_function(test_set[:, :-1])
+        # probs = clf.predict_proba(test_set[:, :-1])[:, 1]
+        acc, macro_f1, auc = compute_score(test_set[:, -1], y, probs)
+        print("Accuracy: %.4f, Macro-F1: %.4f, AUC: %.4f" % (acc, macro_f1, auc))
+        dump_result(acc, macro_f1, auc)
     elif args.model_type == "lr":
-        clf = LogisticRegression(class_weight=weight, random_state=args.seed, max_iter=500)
+        clf = LogisticRegressionCV(cv=5, class_weight=weight, random_state=args.seed, max_iter=100)
         train_set = np.concatenate([train_set, dev_set], axis=0)
         clf.fit(train_set[:, :-1], train_set[:, -1])
         y = clf.predict(test_set[:, :-1])
-        acc = (test_set[:, -1] == y).sum() / len(y)
-        macro_f1 = f1_score(test_set[:, -1], y, average="macro")     
-        print("Accuracy: %.4f, Macro-F1: %.4f" % (acc, macro_f1))
+        probs = clf.decision_function(test_set[:, :-1])
+        acc, macro_f1, auc = compute_score(test_set[:, -1], y, probs)
+        print("Accuracy: %.4f, Macro-F1: %.4f, AUC: %.4f" % (acc, macro_f1, auc))
+        dump_result(acc, macro_f1, auc)
     else:
         train_set = DatasetForBF(args, train_set)
         dev_set = DatasetForBF(args, dev_set)
