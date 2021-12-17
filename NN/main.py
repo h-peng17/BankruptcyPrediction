@@ -117,10 +117,10 @@ def dump_result(acc, macro_f1, auc):
         f.close()
     
 
-def compute_score(label, preds, probs):
-    acc = accuracy_score(label, preds)
-    f1 = f1_score(label, preds, average="macro")   
-    auc = roc_auc_score(label, probs)
+def compute_score(labels, preds, probs):
+    acc = accuracy_score(labels, preds)
+    f1 = f1_score(labels, preds, average="macro")   
+    auc = roc_auc_score(labels, probs)
     return acc, f1, auc 
 
 
@@ -169,7 +169,7 @@ if __name__ == "__main__":
     print(weight)
 
     if args.model_type == "svm":
-        clf = SVC(kernel="rbf", class_weight=weight, probability=True, random_state=args.seed)
+        clf = SVC(kernel="rbf", class_weight="balanced", probability=True)
         train_set = np.concatenate([train_set, dev_set], axis=0)
         clf.fit(train_set[:, :-1], train_set[:, -1])
         y = clf.predict(test_set[:, :-1])
@@ -179,7 +179,7 @@ if __name__ == "__main__":
         print("Accuracy: %.4f, Macro-F1: %.4f, AUC: %.4f" % (acc, macro_f1, auc))
         dump_result(acc, macro_f1, auc)
     elif args.model_type == "lr":
-        clf = LogisticRegressionCV(cv=5, class_weight=weight, random_state=args.seed, max_iter=100)
+        clf = LogisticRegressionCV(max_iter=10000, n_jobs=8)
         train_set = np.concatenate([train_set, dev_set], axis=0)
         clf.fit(train_set[:, :-1], train_set[:, -1])
         y = clf.predict(test_set[:, :-1])

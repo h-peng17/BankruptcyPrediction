@@ -48,9 +48,9 @@
 
 for year in 1 2 3 4 5; do
     CUDA_VISIBLE_DEVICES=$1 python main.py \
-        --model_type svm \
+        --model_type lr \
         --imputer simple \
-        --sample smotesample \
+        --sample none \
         --sample_rate 0.1 \
         --loss_fn sigmoid \
         --input_file ../data/${year}year.arff \
