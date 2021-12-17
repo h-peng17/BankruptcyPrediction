@@ -17,10 +17,6 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.impute import KNNImputer, SimpleImputer
 from sklearn.utils import resample
 
-from imblearn.over_sampling import SMOTE
-from imblearn.under_sampling import RandomUnderSampler
-from imblearn.pipeline import Pipeline
-
 
 def select_col(data):
     """
@@ -123,33 +119,13 @@ def downsample(data, seed, sample_rate):
     return data  
 
 
-def smotesample(data, seed, sample_rate):
-    """ First upsample minority, and the downsample majority.
-    Args:
-        sample_rate: float. Upsample minority data to 
-            sample_rate * len(majority data)
-    """
-    assert sample_rate < 1.0
-    over = SMOTE(sampling_strategy=sample_rate)
-    under = RandomUnderSampler(sampling_strategy=0.5)
-    steps = [('o', over), ('u', under)]
-    pipeline = Pipeline(steps=steps)
-    # transform the dataset
-    X = data[:, :-1]
-    y = data[:, -1]
-    X, y = pipeline.fit_resample(X, y)
-    sampled_data = np.concatenate([X, np.expand_dims(y, axis=1)], axis=1)  
-    print("Before smotesampling: %d, after smotesampling: %d" % (len(data), len(sampled_data)))
-    return sampled_data
-
-
 def split_data(args,
                 input_file: str=None, 
                 all_data: np.ndarray=None,
                 train_rate: float=0.8, 
                 dev_rate: float=0.1, 
                 test_rate: float=0.1, 
-                norm: bool=True) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict]:
+                equal_split: bool=False) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict]:
     if all_data is not None:
         end_of_train = int(train_rate * len(all_data))
         end_of_dev = int((train_rate+dev_rate) * len(all_data))
@@ -165,23 +141,55 @@ def split_data(args,
         random.seed(args.seed)
         data, meta = arff.loadarff(input_file)
         data = data.tolist()
-        random.shuffle(data)
+        # random.shuffle(data)
         data = np.array(data, dtype=np.float32)
         data = standardize(impute(data, _imputer=args.imputer))
         # split
         assert int(train_rate+dev_rate+test_rate)== 1
-        end_of_train = int(train_rate * len(data))
-        end_of_dev = int((train_rate+dev_rate) * len(data))
-        train = data[:end_of_train]
-        dev = data[end_of_train:end_of_dev]
-        test = data[end_of_dev:]
+        if not equal_split:
+            shuffle_index = np.random.choice(list(range(len(data))), size=len(data), replace=False)
+            data = data[shuffle_index]
+            end_of_train = int(train_rate * len(data))
+            end_of_dev = int((train_rate+dev_rate) * len(data))
+            train = data[:end_of_train]
+            dev = data[end_of_train:end_of_dev]
+            test = data[end_of_dev:]
+        else:
+            label = data[:, -1]
+            pure_data = data[:, :-1]
+            negative_data = pure_data[label == 0]
+            positive_data = pure_data[label == 1]
+
+            negative_train_end = int(train_rate * len(negative_data))
+            positive_train_end = int(train_rate * len(positive_data))
+            negative_dev_end = negative_train_end + int(dev_rate * len(negative_data))
+            positive_dev_end = positive_train_end + int(dev_rate * len(positive_data))
+
+            negative_train = negative_data[:negative_train_end]
+            positive_train = positive_data[:positive_train_end]
+            negative_dev = negative_data[negative_train_end:negative_dev_end]
+            positive_dev = positive_data[positive_train_end:positive_dev_end]
+            negative_test = negative_data[negative_dev_end:]
+            positive_test = positive_data[positive_dev_end:]
+
+            train_data = np.concatenate([negative_train, positive_train])
+            train_label = np.array([0] * len(negative_train) + [1] * len(positive_train))
+            random_numbers = np.random.choice(list(range(len(train_data))), len(train_data), replace=False)
+            train_data = train_data[random_numbers]
+            train_label = train_label[random_numbers]
+            dev_data = np.concatenate([negative_dev, positive_dev])
+            dev_label = np.array([0] * len(negative_dev) + [1] * len(positive_dev))
+            test_data = np.concatenate([negative_test, positive_test])
+            test_label = np.array([0] * len(negative_test) + [1] * len(positive_test))
+
+            train = np.concatenate([train_data, train_label[:, None]], axis=1)
+            dev = np.concatenate([dev_data, dev_label[:, None]], axis=1)
+            test = np.concatenate([test_data, test_label[:, None]], axis=1)
         # sample 
         if args.sample == "upsample":
             train = upsample(train, args.seed, args.sample_rate)
         elif args.sample == "downsample":
             train = downsample(train, args.seed, args.sample_rate)
-        elif args.sample == "smotesample":
-            train = smotesample(train, args.seed, args.sample_rate)
         else:
             pass 
         # weight
@@ -189,7 +197,8 @@ def split_data(args,
         neg = len(train) - pos 
         weight = {1: float(neg/pos)}
     print("#Train: %d, #Dev: %d, #Test: %d" % (len(train), len(dev), len(test)))
-    print("#PosLabel: Train: %d, #Dev: %d, #Test: %d" % (train[:, -1].sum(), dev[:, -1].sum(), test[:, -1].sum()))
+    print("#Train: %d, #Dev: %d, #Test: %d" % (train[:, -1].sum(), dev[:, -1].sum(), test[:, -1].sum()))
+
     return train, dev, test, weight
 
 
@@ -222,9 +231,13 @@ class DatasetForFilling(Dataset):
         else:
             return x 
 
+if __name__ == '__main__':
+    from argparse import ArgumentParser
+    parser = ArgumentParser()
+    parser.add_argument('--seed', default=42)
+    parser.add_argument('--imputer', default='simple')
+    parser.add_argument('--sample', default='upsample')
+    parser.add_argument('--sample_rate', default=2)
+    args = parser.parse_args()
 
-
-
-
-
-
+    split_data(args, './data/1year.arff', None, equal_split=True)
