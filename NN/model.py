@@ -41,9 +41,13 @@ class MLPForBF(nn.Module):
         x = self.mlp3(x) + x
         if self.args.loss_fn == "sigmoid":
             logits = self.fc(x).squeeze(-1)
-            loss_fn = nn.BCEWithLogitsLoss(pos_weight=self.pos_weight)
+            # loss_fn = nn.BCEWithLogitsLoss(pos_weight=self.pos_weight)
+            loss_fn = nn.BCEWithLogitsLoss()
             loss = loss_fn(logits, y)
-            preds = torch.sigmoid(logits) > 0.5
+            if self.training:
+                preds = torch.sigmoid(logits) > 0.5
+            else:
+                preds = torch.sigmoid(logits)
         else:
             logits = self.fc(x)
             loss_fn = nn.CrossEntropyLoss()
