@@ -1,16 +1,18 @@
-import os 
-import pdb 
-import json 
+import os
+import pdb
+import json
 import random
-from re import M 
+from re import M
 
 from typing import Dict, Optional, Tuple, List
+
+import pandas
 from numpy.matrixlib.defmatrix import asmatrix
 
-import torch 
+import torch
 from torch.utils.data import DataLoader, Dataset
 import torch.nn.functional as F
-import numpy as np 
+import numpy as np
 
 from scipy.io import arff
 from sklearn.preprocessing import StandardScaler
@@ -29,17 +31,17 @@ def select_col(data):
     """
     label = data[:, -1]
     data_no_nan = []
-    column_idx, final_column = -1, None 
+    column_idx, final_column = -1, None
     nan_cnt = data.size(0)
     for i in range(data.size(1)-1):
-        column = data[:, i] 
+        column = data[:, i]
         _nan = torch.isnan(column).sum()
         if _nan == 0:
             data_no_nan.append(column)
         else:
             if _nan < nan_cnt:
-                nan_cnt = _nan 
-                final_column = column 
+                nan_cnt = _nan
+                final_column = column
                 column_idx = i
     train_idx, test_idx = [], []
     if final_column is not None:
@@ -50,7 +52,7 @@ def select_col(data):
             else:
                 train_idx.append(i)
     else:
-        return None, None, None, None, None  
+        return None, None, None, None, None
     data_no_nan.append(label)
     all_data = torch.stack(data_no_nan, dim=1)
     # pdb.set_trace()
@@ -69,7 +71,7 @@ def impute(data, _imputer="simple"):
         data = imputer.fit_transform(data)
     elif _imputer == "none":
         data = torch.tensor(data).nan_to_num()
-        pass 
+        pass
     else:
         raise ValueError
     return data
@@ -94,13 +96,13 @@ def upsample(data, seed, sample_rate):
             majority.append(item)
         else:
             raise ValueError
-    upsampled_minority = resample(minority, 
+    upsampled_minority = resample(minority,
                                     replace=True,
                                     n_samples=int(len(minority)*sample_rate),
                                     random_state=seed)
     print("Before upsampling: %d, after upsampling: %d" % (len(minority), len(upsampled_minority)))
     data = np.stack(majority+upsampled_minority, axis=0)
-    return data    
+    return data
 
 
 def downsample(data, seed, sample_rate):
@@ -114,19 +116,19 @@ def downsample(data, seed, sample_rate):
             majority.append(item)
         else:
             raise ValueError
-    downsampled_majority = resample(majority, 
+    downsampled_majority = resample(majority,
                                     replace=False,
                                     n_samples=int(len(majority)*sample_rate),
                                     random_state=seed)
     print("Before downsampling: %d, after downsampling: %d" % (len(majority), len(downsampled_majority)))
     data = np.stack(downsampled_majority+minority, axis=0)
-    return data  
+    return data
 
 
 def smotesample(data, seed, sample_rate):
     """ First upsample minority, and the downsample majority.
     Args:
-        sample_rate: float. Upsample minority data to 
+        sample_rate: float. Upsample minority data to
             sample_rate * len(majority data)
     """
     assert sample_rate < 1.0
@@ -138,20 +140,20 @@ def smotesample(data, seed, sample_rate):
     X = data[:, :-1]
     y = data[:, -1]
     X, y = pipeline.fit_resample(X, y)
-    sampled_data = np.concatenate([X, np.expand_dims(y, axis=1)], axis=1)  
+    sampled_data = np.concatenate([X, np.expand_dims(y, axis=1)], axis=1)
     print("Before smotesampling: %d, after smotesampling: %d" % (len(data), len(sampled_data)))
     return sampled_data
 
 
 def split_data(args,
-                input_file: str=None, 
-                train_rate: float=0.8, 
-                dev_rate: float=0.1, 
+                input_file: str=None,
+                train_rate: float=0.8,
+                dev_rate: float=0.1,
                 test_rate: float=0.1) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Dict]:
     # load and shuffle
     random.seed(args.seed)
-    data, meta = arff.loadarff(input_file)
-    data = data.tolist()
+    _data, meta = arff.loadarff(input_file)
+    data = _data.tolist()
     random.shuffle(data)
     data = np.array(data, dtype=np.float32)
     data = standardize(impute(data, _imputer=args.imputer))
@@ -162,7 +164,7 @@ def split_data(args,
     train = data[:end_of_train]
     dev = data[end_of_train:end_of_dev]
     test = data[end_of_dev:]
-    # sample 
+    # sample
     if args.sample == "upsample":
         train = upsample(train, args.seed, args.sample_rate)
     elif args.sample == "downsample":
@@ -170,23 +172,29 @@ def split_data(args,
     elif args.sample == "smotesample":
         train = smotesample(train, args.seed, args.sample_rate)
     else:
-        pass 
+        pass
     # weight
     pos = train[:, -1].sum()
-    neg = len(train) - pos 
+    neg = len(train) - pos
     weight = {1: float(neg/pos)}
     print("#Train: %d, #Dev: %d, #Test: %d" % (len(train), len(dev), len(test)))
     print("#PosLabel: Train: %d, #Dev: %d, #Test: %d" % (train[:, -1].sum(), dev[:, -1].sum(), test[:, -1].sum()))
+
+    if args.model_type == 'nb':
+        _data = pandas.DataFrame(_data)
+        train = pandas.DataFrame(data=train, columns=_data.columns.tolist())
+        dev = pandas.DataFrame(data=dev, columns=_data.columns.tolist())
+        test = pandas.DataFrame(data=test, columns=_data.columns.tolist())
     return train, dev, test, weight
 
 
 class DatasetForBF(Dataset):
     def __init__(self, args, data):
-        self.data = data 
-    
+        self.data = data
+
     def __len__(self):
         return len(self.data)
-    
+
     def __getitem__(self, index):
         x = torch.tensor(self.data[index][:-1], dtype=torch.float32)
         y = torch.tensor(self.data[index][-1], dtype=torch.float32)
@@ -195,19 +203,19 @@ class DatasetForBF(Dataset):
 
 class DatasetForFilling(Dataset):
     def __init__(self, args, data, label=None):
-        self.data = data 
-        self.label = label 
-    
+        self.data = data
+        self.label = label
+
     def __len__(self):
         return len(self.data)
-    
+
     def __getitem__(self, index):
         x = self.data[index].to(torch.float32)
         if self.label is not None:
             y = self.label[index].to(torch.float32)
             return x, y
         else:
-            return x 
+            return x
 
 
 

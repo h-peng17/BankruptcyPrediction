@@ -18,15 +18,16 @@ from sklearn.metrics import f1_score, roc_auc_score, accuracy_score
 from sklearn.svm import SVC
 from sklearn.linear_model import LogisticRegressionCV, LogisticRegression
 
-import numpy as np 
+import numpy as np
 import torch
 import torch.nn as nn
-import torch.optim as optim
+#import torch.optim as optim
 from torch.utils.data import DataLoader
-from torch.utils.tensorboard import SummaryWriter 
+from torch.utils.tensorboard import SummaryWriter
 
 from model import MLPForBF
 from data_loader import split_data, DatasetForBF
+from naive_bayes.model import NaiveBayesProcessor
 from data_processor import fill_empty
 
 
@@ -80,7 +81,7 @@ def train(args, model, train_dataloader, dev_dataloader, test_dataloader):
         # dev
         with torch.no_grad():
             print("deving....")
-            model.eval()            
+            model.eval()
             acc, f1, auc = eval_F1(args, model, dev_dataloader)
             writter.add_scalar("Macro F1 on test", f1, i)
             if f1 > best_dev_score:
@@ -115,42 +116,42 @@ def dump_result(acc, macro_f1, auc):
         result = "&%.2f&%.2f&%.2f" % (acc*100, macro_f1*100, auc*100)
         f.write(result)
         f.close()
-    
+
 
 def compute_score(labels, preds, probs):
     acc = accuracy_score(labels, preds)
-    f1 = f1_score(labels, preds, average="macro")   
+    f1 = f1_score(labels, preds, average="macro")
     auc = roc_auc_score(labels, probs)
-    return acc, f1, auc 
+    return acc, f1, auc
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="recognize")
     parser.add_argument("--input_file", dest="input_file", type=str,
-                        default="", help="input file")
-    
-    parser.add_argument("--imputer", dest="imputer", type=str, 
+                        default="../data/5year.arff", help="input file")
+
+    parser.add_argument("--imputer", dest="imputer", type=str,
                         default="simple", help="imputer")
-    parser.add_argument("--sample", dest="sample", type=str, 
-                        default="upsample", help="sample")
-    parser.add_argument("--sample_rate", dest="sample_rate", type=float, 
+    parser.add_argument("--sample", dest="sample", type=str,
+                        default="default", help="sample")
+    parser.add_argument("--sample_rate", dest="sample_rate", type=float,
                         default=1.0, help="sample_rate")
 
     parser.add_argument("--model_type", dest="model_type", type=str,
-                        default="cnn", help="model type")
+                        default="nb", help="model type")
     parser.add_argument("--loss_fn", dest="loss_fn", type=str,
                         default="sigmoid", help="loss_fn loss_fn")
 
-    parser.add_argument("--max_epoches", dest="max_epoches", type=int, 
+    parser.add_argument("--max_epoches", dest="max_epoches", type=int,
                         default=3, help="max epoch")
-    parser.add_argument("--batch_size_per_gpu", dest="batch_size_per_gpu", type=int, 
+    parser.add_argument("--batch_size_per_gpu", dest="batch_size_per_gpu", type=int,
                         default=64, help="batch size pre gpu")
 
     parser.add_argument("--hidden_size", dest="hidden_size", type=int,
                         default=160,help='hidden size')
     parser.add_argument("--num_classes", dest="num_classes", type=int,
                         default=50,help='number of classes')
-    
+
     parser.add_argument("--optim", dest="optim", type=str,
                         default="adam", help="optim")
     parser.add_argument("--learning_rate", dest="learning_rate", type=float,
@@ -158,13 +159,17 @@ if __name__ == "__main__":
     parser.add_argument("--weight_decay", dest="weight_decay", type=float,
                         default=1e-5, help="weight decay")
 
+    # Naive Bayes
+    parser.add_argument("--nb_classifier", type=str, choices=['gaussian', 'bernoulli'], default="bernoulli")
+    parser.add_argument("--nb_binarizer", type=str, choices=['zero', 'mean', 'median'], default="mean")
+
     parser.add_argument("--seed", dest="seed", type=int,
                         default=42, help="seed for network")
     args = parser.parse_args()
     print("-"*100)
     print(args)
     # set seed
-    set_seed(args)    
+    set_seed(args)
     train_set, dev_set, test_set, weight = split_data(args, input_file=args.input_file)
     print(weight)
 
@@ -187,22 +192,27 @@ if __name__ == "__main__":
         acc, macro_f1, auc = compute_score(test_set[:, -1], y, probs)
         print("Accuracy: %.4f, Macro-F1: %.4f, AUC: %.4f" % (acc, macro_f1, auc))
         dump_result(acc, macro_f1, auc)
+    elif args.model_type == 'nb':
+        clf = NaiveBayesProcessor(args, train_set, test_set)
+        y, probs = clf.predict()
+        acc, macro_f1, auc = compute_score(test_set.to_numpy(dtype=np.float32)[:, -1], y, probs)
+        print("Accuracy: %.4f, Macro-F1: %.4f, AUC: %.4f" % (acc, macro_f1, auc))
     else:
         train_set = DatasetForBF(args, train_set)
         dev_set = DatasetForBF(args, dev_set)
         test_set = DatasetForBF(args, test_set)
 
-        train_dataloader = DataLoader(train_set, batch_size=args.batch_size_per_gpu, shuffle=False, num_workers=0)        
+        train_dataloader = DataLoader(train_set, batch_size=args.batch_size_per_gpu, shuffle=False, num_workers=0)
         dev_dataloader = DataLoader(dev_set, batch_size=args.batch_size_per_gpu, shuffle=False, num_workers=0)
         test_dataloader = DataLoader(test_set, batch_size=args.batch_size_per_gpu, shuffle=False, num_workers=0)
-        
+
         if args.model_type == "mlp":
             model = MLPForBF(args, weight)
         else:
             raise ValueError
         model.cuda()
         train(args, model, train_dataloader, dev_dataloader, test_dataloader)
-    
-    
+
+
 
 
